@@ -1,63 +1,12 @@
-/**
- * GET /api/download?url=<encoded-url>&filename=<name>
- *
- * Server-side proxy that fetches the asset and returns it with
- * Content-Disposition: attachment so the browser saves it to disk.
- * Only allowed origins are proxied.
- */
 import { NextRequest, NextResponse } from "next/server";
-import { GUEST_MODE } from "@/lib/guestMode";
+import { readMediaUrl } from "@/lib/localMedia";
 
-const ALLOWED_ORIGINS = [
-  process.env.R2_PUBLIC_URL ?? "",
-  "https://cdn.kie.ai",
-  "https://api.kie.ai",
-  "https://replicate.delivery",
-  "https://pbxt.replicate.delivery",
-].filter(Boolean).map((o) => o.replace(/\/$/, ""));
-
-function isAllowed(url: string): boolean {
-  if (GUEST_MODE && url.startsWith("/generated/")) return true; // local disk, served same-origin
-  return ALLOWED_ORIGINS.some((origin) => url.startsWith(origin));
-}
-
-export const runtime = "edge";
-
-export async function GET(req: NextRequest) {
-  const url = req.nextUrl.searchParams.get("url");
-  const filename = req.nextUrl.searchParams.get("filename") ?? "download";
-
-  if (!url) return new NextResponse("Missing url", { status: 400 });
-  if (!isAllowed(url)) return new NextResponse("Forbidden", { status: 403 });
-
-  let fetchUrl = url;
-  if (GUEST_MODE && url.startsWith("/generated/")) {
-    const resolved = new URL(url, req.nextUrl.origin);
-    // Re-check after normalization: rejects "/generated/../api/..." traversal
-    // that would otherwise turn this proxy into same-origin SSRF.
-    if (!resolved.pathname.startsWith("/generated/")) return new NextResponse("Forbidden", { status: 403 });
-    fetchUrl = resolved.toString();
-  }
-
-  let upstream: Response;
+export async function GET(request: NextRequest) {
+  const url = request.nextUrl.searchParams.get("url");
+  const filename = (request.nextUrl.searchParams.get("filename") || "image.png").replace(/[^a-zA-Z0-9._-]/g, "_");
+  if (!url || !url.startsWith("/api/media/")) return new NextResponse("Forbidden", { status: 403 });
   try {
-    upstream = await fetch(fetchUrl);
-  } catch {
-    return new NextResponse("Fetch failed", { status: 502 });
-  }
-
-  if (!upstream.ok) {
-    return new NextResponse("Upstream error", { status: upstream.status });
-  }
-
-  const contentType = upstream.headers.get("content-type") ?? "application/octet-stream";
-
-  return new NextResponse(upstream.body, {
-    status: 200,
-    headers: {
-      "Content-Type": contentType,
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "Cache-Control": "no-store",
-    },
-  });
+    const { buffer, extension } = await readMediaUrl(url);
+    return new NextResponse(new Uint8Array(buffer), { headers: { "Content-Type": `image/${extension === "jpg" ? "jpeg" : extension}`, "Content-Disposition": `attachment; filename="${filename}"`, "Cache-Control": "no-store" } });
+  } catch { return new NextResponse("Not found", { status: 404 }); }
 }
