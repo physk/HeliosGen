@@ -19,6 +19,7 @@ export type Generation = {
   reference_image_urls: string[];
   image_url?: string;
   error_msg?: string;
+  deleted_at?: string;
   created_at: string;
   updated_at: string;
 };
@@ -28,6 +29,7 @@ export type Upload = {
   url: string;
   mime_type: string;
   owner?: string;
+  deleted_at?: string;
   created_at: string;
 };
 
@@ -84,7 +86,7 @@ export function getGenerationById(id: string): Generation | undefined {
 
 export function getGenerations(): Generation[] {
   return read().generations
-    .filter((item) => item.status === "done" && item.image_url)
+    .filter((item) => item.status === "done" && item.image_url && !item.deleted_at)
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
 }
 
@@ -92,9 +94,10 @@ export function getGenerationByImageUrl(url: string): Generation | undefined {
   return read().generations.find((item) => item.image_url === url);
 }
 
-export function deleteGeneration(id: string): void {
+export function hideGeneration(id: string): void {
   const db = read();
-  db.generations = db.generations.filter((item) => item.id !== id);
+  const generation = db.generations.find((item) => item.id === id);
+  if (generation) generation.deleted_at = new Date().toISOString();
   write(db);
 }
 
@@ -107,7 +110,7 @@ export function addUpload(data: Omit<Upload, "id" | "created_at"> & { owner: str
 }
 
 export function getUploads(): Upload[] {
-  return read().uploads.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  return read().uploads.filter((item) => !item.deleted_at).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
 }
 
 export function getUploadById(id: string): Upload | undefined {
@@ -118,8 +121,9 @@ export function getUploadByUrl(url: string): Upload | undefined {
   return read().uploads.find((item) => item.url === url);
 }
 
-export function deleteUpload(id: string): void {
+export function hideUpload(id: string): void {
   const db = read();
-  db.uploads = db.uploads.filter((item) => item.id !== id);
+  const upload = db.uploads.find((item) => item.id === id);
+  if (upload) upload.deleted_at = new Date().toISOString();
   write(db);
 }

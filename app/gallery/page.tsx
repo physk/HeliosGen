@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ImagePlus, Maximize2, Minimize2, Plus, X } from "lucide-react";
+import { Check, ImagePlus, Maximize2, Minimize2, Plus, Trash2, X } from "lucide-react";
 import { useSidebar } from "@/components/ui/sidebar";
 import DotCanvasBackground from "@/components/ui/DotCanvasBackground";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
@@ -63,7 +63,7 @@ function PendingTile({ item }: { item: Pending }) {
   </div>;
 }
 
-function GalleryCard({ item, onOpen, onAddReference, referenceSelected, referenceDisabled, showOwner }: { item: ImageItem; onOpen: () => void; onAddReference: () => void; referenceSelected: boolean; referenceDisabled: boolean; showOwner: boolean }) {
+function GalleryCard({ item, onOpen, onAddReference, onDelete, referenceSelected, referenceDisabled, showOwner }: { item: ImageItem; onOpen: () => void; onAddReference: () => void; onDelete: () => void; referenceSelected: boolean; referenceDisabled: boolean; showOwner: boolean }) {
   const [focused, setFocused] = useState(false);
   const showDetails = focused;
   return <div style={{ position: "relative", overflow: "hidden", width: "100%", aspectRatio: item.aspect_ratio?.replace(":", " /") || "4 / 3", borderRadius: 12, background: "#14171c" }}>
@@ -72,6 +72,7 @@ function GalleryCard({ item, onOpen, onAddReference, referenceSelected, referenc
       {showDetails && <div style={{ position: "absolute", inset: "auto 0 0", padding: "36px 10px 10px", textAlign: "left", background: "linear-gradient(to top, rgba(0,0,0,.82), transparent)", pointerEvents: "none" }}><p style={{ maxHeight: 76, margin: 0, overflow: "auto", color: "rgba(255,255,255,.9)", fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>{item.prompt || "No prompt"}</p>{showOwner && item.owner && <p style={{ margin: "5px 0 0", color: "rgba(45,212,191,.8)", fontSize: 10 }}>· {item.owner}</p>}</div>}
     </button>
     {item.source === "generation" && <button type="button" onClick={(event) => { event.stopPropagation(); if (!referenceDisabled || referenceSelected) onAddReference(); }} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} disabled={referenceDisabled && !referenceSelected} aria-pressed={referenceSelected} aria-label={referenceSelected ? "Reference added" : "Use as reference"} title={referenceSelected ? "Reference added" : referenceDisabled ? "Reference limit reached" : "Use as reference"} style={{ position: "absolute", top: 8, right: 8, display: "grid", placeItems: "center", width: 28, height: 28, border: "1px solid rgba(255,255,255,.16)", borderRadius: 8, color: referenceSelected ? "#062522" : "#fff", background: referenceSelected ? "#2DD4BF" : "rgba(0,0,0,.62)", opacity: referenceDisabled && !referenceSelected ? .45 : 1, cursor: referenceDisabled && !referenceSelected ? "not-allowed" : "pointer", backdropFilter: "blur(10px)" }}>{referenceSelected ? <Check size={14} /> : <ImagePlus size={14} />}</button>}
+    <button type="button" onClick={(event) => { event.stopPropagation(); onDelete(); }} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} aria-label="Remove from gallery" title="Remove from gallery (keeps file on disk)" style={{ position: "absolute", top: 8, right: item.source === "generation" ? 42 : 8, display: "grid", placeItems: "center", width: 28, height: 28, border: "1px solid rgba(255,255,255,.16)", borderRadius: 8, color: "rgba(255,255,255,.8)", background: "rgba(0,0,0,.62)", cursor: "pointer", backdropFilter: "blur(10px)" }}><Trash2 size={14} /></button>
   </div>;
 }
 
@@ -170,6 +171,13 @@ function GalleryInner() {
     setReferences((current) => addReferenceImage(current, url));
   };
   const addGalleryReference = (url: string) => setReferences((current) => addReferenceImage(current, url));
+  async function removeFromGallery(item: ImageItem) {
+    if (!window.confirm("Remove this image from the gallery? The file will stay on disk.")) return;
+    const response = await fetch("/api/gallery", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: item.id, source: item.source }) });
+    if (!response.ok) { setError("Unable to remove image from gallery"); return; }
+    setItems((current) => current.filter((candidate) => !(candidate.id === item.id && candidate.source === item.source)));
+    setLightbox((current) => current?.id === item.id ? null : current);
+  }
   return <div style={{ flex: 1, background: "#0B0E14", display: "flex", flexDirection: "column", overflow: "hidden", color: "#fff", position: "relative" }}>
     <DotCanvasBackground />
     <div style={{ position: "relative", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "space-between", height: 48, padding: "0 18px", borderBottom: "1px solid rgba(255,255,255,.06)", opacity: state === "collapsed" ? 1 : 0.95 }}>
@@ -177,7 +185,7 @@ function GalleryInner() {
       <div style={{ display: "flex", alignItems: "center", gap: 10, color: "rgba(255,255,255,.4)", fontSize: 11 }}><Minimize2 size={13} /><input aria-label="Gallery zoom" type="range" min="2" max="8" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} style={{ width: 74, accentColor: "#2DD4BF" }} /><Maximize2 size={13} /></div>
     </div>
     <div style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, overflowY: "auto", padding: "18px 18px 270px" }}>
-      {pending.length + items.length === 0 ? <EmptyState /> : <div style={{ display: "grid", gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: 12 }}>{pending.map((item) => <PendingTile key={item.id} item={item} />)}{items.map((item) => <GalleryCard key={`${item.source}-${item.id}`} item={item} onOpen={() => setLightbox(item)} onAddReference={() => addGalleryReference(item.url)} referenceSelected={references.some((reference) => reference.url === item.url)} referenceDisabled={references.length >= 5} showOwner={isAdmin} />)}</div>}
+      {pending.length + items.length === 0 ? <EmptyState /> : <div style={{ display: "grid", gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: 12 }}>{pending.map((item) => <PendingTile key={item.id} item={item} />)}{items.map((item) => <GalleryCard key={`${item.source}-${item.id}`} item={item} onOpen={() => setLightbox(item)} onAddReference={() => addGalleryReference(item.url)} onDelete={() => void removeFromGallery(item)} referenceSelected={references.some((reference) => reference.url === item.url)} referenceDisabled={references.length >= 5} showOwner={isAdmin} />)}</div>}
     </div>
     <div style={{ position: "absolute", zIndex: 4, left: "50%", bottom: 24, transform: "translateX(-50%)", width: "min(760px, calc(100% - 32px))" }}>
       {error && <div role="alert" style={{ marginBottom: 8, padding: "10px 14px", borderRadius: 10, border: "1px solid rgba(248,113,113,.25)", background: "rgba(16,18,20,.97)", color: "#f87171", fontSize: 12 }}>{error}</div>}
