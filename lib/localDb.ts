@@ -7,12 +7,13 @@ export const DB_DIR = join(DATA_DIR, "db");
 export const IMAGE_DIR = join(DATA_DIR, "images");
 export const REFERENCE_DIR = join(DATA_DIR, "references");
 
-type Generation = {
+export type Generation = {
   id: string;
   task_id: string;
   status: "pending" | "done" | "error";
   prompt: string;
   model: "codex-imagegen";
+  owner?: string;
   aspect_ratio: string;
   quality: string;
   reference_image_urls: string[];
@@ -22,10 +23,11 @@ type Generation = {
   updated_at: string;
 };
 
-type Upload = {
+export type Upload = {
   id: string;
   url: string;
   mime_type: string;
+  owner?: string;
   created_at: string;
 };
 
@@ -55,7 +57,7 @@ function write(db: Database): void {
   writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf8");
 }
 
-export function createGeneration(data: Omit<Generation, "id" | "created_at" | "updated_at">): Generation {
+export function createGeneration(data: Omit<Generation, "id" | "created_at" | "updated_at"> & { owner: string }): Generation {
   const db = read();
   const now = new Date().toISOString();
   const generation = { ...data, id: randomUUID(), created_at: now, updated_at: now };
@@ -76,10 +78,18 @@ export function getGeneration(taskId: string): Generation | undefined {
   return read().generations.find((item) => item.task_id === taskId);
 }
 
+export function getGenerationById(id: string): Generation | undefined {
+  return read().generations.find((item) => item.id === id);
+}
+
 export function getGenerations(): Generation[] {
   return read().generations
     .filter((item) => item.status === "done" && item.image_url)
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+}
+
+export function getGenerationByImageUrl(url: string): Generation | undefined {
+  return read().generations.find((item) => item.image_url === url);
 }
 
 export function deleteGeneration(id: string): void {
@@ -88,7 +98,7 @@ export function deleteGeneration(id: string): void {
   write(db);
 }
 
-export function addUpload(data: Omit<Upload, "id" | "created_at">): Upload {
+export function addUpload(data: Omit<Upload, "id" | "created_at"> & { owner: string }): Upload {
   const db = read();
   const upload = { ...data, id: randomUUID(), created_at: new Date().toISOString() };
   db.uploads.push(upload);
@@ -98,6 +108,14 @@ export function addUpload(data: Omit<Upload, "id" | "created_at">): Upload {
 
 export function getUploads(): Upload[] {
   return read().uploads.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+}
+
+export function getUploadById(id: string): Upload | undefined {
+  return read().uploads.find((item) => item.id === id);
+}
+
+export function getUploadByUrl(url: string): Upload | undefined {
+  return read().uploads.find((item) => item.url === url);
 }
 
 export function deleteUpload(id: string): void {

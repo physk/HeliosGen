@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ImagePlus, Maximize2, Minimize2, Plus, X } from "lucide-react";
+import { Check, ImagePlus, Maximize2, Minimize2, Plus, X } from "lucide-react";
 import { useSidebar } from "@/components/ui/sidebar";
 import DotCanvasBackground from "@/components/ui/DotCanvasBackground";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { MediaPickerModal } from "@/components/MediaPickerModal";
+import { addReferenceImage, type ReferenceImage } from "@/lib/referenceImages";
 
 type ImageItem = {
   id: string;
@@ -16,9 +17,10 @@ type ImageItem = {
   aspect_ratio?: string;
   quality?: string;
   referenceImageUrls?: string[];
+  owner?: string;
 };
 
-type Reference = { id: string; url: string; uploading?: boolean; error?: string };
+type Reference = ReferenceImage;
 type Pending = { id: string; prompt: string; refs: string[]; status: "pending" | "generating" | "error"; error?: string };
 
 const EMPTY_IMAGES = ["/1.webp", "/2.webp", "/3.webp", "/4.webp"];
@@ -61,10 +63,16 @@ function PendingTile({ item }: { item: Pending }) {
   </div>;
 }
 
-function GalleryCard({ item, onOpen }: { item: ImageItem; onOpen: () => void }) {
-  return <button type="button" onClick={onOpen} style={{ position: "relative", display: "block", overflow: "hidden", width: "100%", aspectRatio: item.aspect_ratio?.replace(":", " /") || "4 / 3", border: 0, borderRadius: 12, padding: 0, background: "#14171c", cursor: "pointer" }}>
-    <img src={item.url} alt={item.prompt || "Generated image"} loading="lazy" style={{ display: "block", width: "100%", height: "100%", objectFit: "cover" }} />
-  </button>;
+function GalleryCard({ item, onOpen, onAddReference, referenceSelected, referenceDisabled, showOwner }: { item: ImageItem; onOpen: () => void; onAddReference: () => void; referenceSelected: boolean; referenceDisabled: boolean; showOwner: boolean }) {
+  const [focused, setFocused] = useState(false);
+  const showDetails = focused;
+  return <div style={{ position: "relative", overflow: "hidden", width: "100%", aspectRatio: item.aspect_ratio?.replace(":", " /") || "4 / 3", borderRadius: 12, background: "#14171c" }}>
+    <button type="button" onClick={onOpen} onMouseEnter={() => setFocused(true)} onMouseLeave={() => setFocused(false)} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} aria-label={item.prompt ? `Generated image: ${item.prompt}` : "Generated image"} style={{ position: "absolute", inset: 0, display: "block", overflow: "hidden", width: "100%", height: "100%", border: 0, padding: 0, background: "#14171c", cursor: "pointer" }}>
+      <img src={item.url} alt={item.prompt || "Generated image"} loading="lazy" style={{ display: "block", width: "100%", height: "100%", objectFit: "cover" }} />
+      {showDetails && <div style={{ position: "absolute", inset: "auto 0 0", padding: "36px 10px 10px", textAlign: "left", background: "linear-gradient(to top, rgba(0,0,0,.82), transparent)", pointerEvents: "none" }}><p style={{ maxHeight: 76, margin: 0, overflow: "auto", color: "rgba(255,255,255,.9)", fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>{item.prompt || "No prompt"}</p>{showOwner && item.owner && <p style={{ margin: "5px 0 0", color: "rgba(45,212,191,.8)", fontSize: 10 }}>· {item.owner}</p>}</div>}
+    </button>
+    {item.source === "generation" && <button type="button" onClick={(event) => { event.stopPropagation(); if (!referenceDisabled || referenceSelected) onAddReference(); }} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} disabled={referenceDisabled && !referenceSelected} aria-pressed={referenceSelected} aria-label={referenceSelected ? "Reference added" : "Use as reference"} title={referenceSelected ? "Reference added" : referenceDisabled ? "Reference limit reached" : "Use as reference"} style={{ position: "absolute", top: 8, right: 8, display: "grid", placeItems: "center", width: 28, height: 28, border: "1px solid rgba(255,255,255,.16)", borderRadius: 8, color: referenceSelected ? "#062522" : "#fff", background: referenceSelected ? "#2DD4BF" : "rgba(0,0,0,.62)", opacity: referenceDisabled && !referenceSelected ? .45 : 1, cursor: referenceDisabled && !referenceSelected ? "not-allowed" : "pointer", backdropFilter: "blur(10px)" }}>{referenceSelected ? <Check size={14} /> : <ImagePlus size={14} />}</button>}
+  </div>;
 }
 
 function GalleryInner() {
@@ -81,6 +89,7 @@ function GalleryInner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lightbox, setLightbox] = useState<ImageItem | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pickerButtonRef = useRef<HTMLButtonElement>(null);
@@ -90,8 +99,9 @@ function GalleryInner() {
   const loadGallery = useCallback(async () => {
     const response = await fetch(`/api/gallery?page=0&source=${source === "uploaded" ? "uploaded" : "generated"}`);
     if (!response.ok) return;
-    const data = await response.json() as { items?: ImageItem[] };
+    const data = await response.json() as { items?: ImageItem[]; isAdmin?: boolean };
     setItems(data.items || []);
+    setIsAdmin(data.isAdmin === true);
   }, [source]);
 
   useEffect(() => { void loadGallery(); }, [loadGallery]);
@@ -157,9 +167,9 @@ function GalleryInner() {
 
   const columns = Math.max(2, Math.min(8, zoom));
   const addPickerReference = (url: string) => {
-    if (references.length >= 5 || references.some((reference) => reference.url === url)) return;
-    setReferences((current) => [...current, { id: `${url}-${Date.now()}`, url }]);
+    setReferences((current) => addReferenceImage(current, url));
   };
+  const addGalleryReference = (url: string) => setReferences((current) => addReferenceImage(current, url));
   return <div style={{ flex: 1, background: "#0B0E14", display: "flex", flexDirection: "column", overflow: "hidden", color: "#fff", position: "relative" }}>
     <DotCanvasBackground />
     <div style={{ position: "relative", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "space-between", height: 48, padding: "0 18px", borderBottom: "1px solid rgba(255,255,255,.06)", opacity: state === "collapsed" ? 1 : 0.95 }}>
@@ -167,7 +177,7 @@ function GalleryInner() {
       <div style={{ display: "flex", alignItems: "center", gap: 10, color: "rgba(255,255,255,.4)", fontSize: 11 }}><Minimize2 size={13} /><input aria-label="Gallery zoom" type="range" min="2" max="8" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} style={{ width: 74, accentColor: "#2DD4BF" }} /><Maximize2 size={13} /></div>
     </div>
     <div style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, overflowY: "auto", padding: "18px 18px 270px" }}>
-      {pending.length + items.length === 0 ? <EmptyState /> : <div style={{ display: "grid", gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: 12 }}>{pending.map((item) => <PendingTile key={item.id} item={item} />)}{items.map((item) => <GalleryCard key={`${item.source}-${item.id}`} item={item} onOpen={() => setLightbox(item)} />)}</div>}
+      {pending.length + items.length === 0 ? <EmptyState /> : <div style={{ display: "grid", gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: 12 }}>{pending.map((item) => <PendingTile key={item.id} item={item} />)}{items.map((item) => <GalleryCard key={`${item.source}-${item.id}`} item={item} onOpen={() => setLightbox(item)} onAddReference={() => addGalleryReference(item.url)} referenceSelected={references.some((reference) => reference.url === item.url)} referenceDisabled={references.length >= 5} showOwner={isAdmin} />)}</div>}
     </div>
     <div style={{ position: "absolute", zIndex: 4, left: "50%", bottom: 24, transform: "translateX(-50%)", width: "min(760px, calc(100% - 32px))" }}>
       {error && <div role="alert" style={{ marginBottom: 8, padding: "10px 14px", borderRadius: 10, border: "1px solid rgba(248,113,113,.25)", background: "rgba(16,18,20,.97)", color: "#f87171", fontSize: 12 }}>{error}</div>}
@@ -186,7 +196,7 @@ function GalleryInner() {
       <div style={{ display: "flex", justifyContent: "center", marginTop: 7, color: "rgba(255,255,255,.25)", fontSize: 10 }}><KbdGroup><Kbd>⌘</Kbd><Kbd>↵</Kbd></KbdGroup><span style={{ marginLeft: 6 }}>to generate</span></div>
     </div>
     <MediaPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} anchorRef={composerRef} selectedUrls={references.map((reference) => reference.url)} maxCount={5} onPickUrl={addPickerReference} onDeselect={(url) => setReferences((current) => current.filter((reference) => reference.url !== url))} onUpload={() => { setPickerOpen(false); fileInputRef.current?.click(); }} />
-    {lightbox && <div role="dialog" aria-modal="true" onClick={() => setLightbox(null)} style={{ position: "fixed", zIndex: 20, inset: 0, display: "grid", placeItems: "center", padding: 24, background: "rgba(0,0,0,.82)" }}><button type="button" aria-label="Close preview" onClick={() => setLightbox(null)} style={{ position: "fixed", top: 18, right: 18, display: "grid", placeItems: "center", width: 34, height: 34, border: "1px solid rgba(255,255,255,.12)", borderRadius: "50%", color: "#fff", background: "rgba(0,0,0,.5)" }}><X size={15} /></button><img src={lightbox.url} alt={lightbox.prompt || "Generated image"} onClick={(event) => event.stopPropagation()} style={{ maxWidth: "min(92vw, 1200px)", maxHeight: "86vh", objectFit: "contain", borderRadius: 12 }} /></div>}
+    {lightbox && <div role="dialog" aria-modal="true" aria-label="Image details" onClick={() => setLightbox(null)} style={{ position: "fixed", zIndex: 20, inset: 0, display: "grid", placeItems: "center", padding: 24, background: "rgba(0,0,0,.82)" }}><button type="button" aria-label="Close preview" onClick={() => setLightbox(null)} style={{ position: "fixed", top: 18, right: 18, display: "grid", placeItems: "center", width: 34, height: 34, border: "1px solid rgba(255,255,255,.12)", borderRadius: "50%", color: "#fff", background: "rgba(0,0,0,.5)" }}><X size={15} /></button><div onClick={(event) => event.stopPropagation()} style={{ maxWidth: "min(92vw, 1200px)", maxHeight: "90vh", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}><img src={lightbox.url} alt={lightbox.prompt || "Generated image"} style={{ maxWidth: "100%", maxHeight: "76vh", objectFit: "contain", borderRadius: 12 }} /><div style={{ width: "min(760px, 88vw)", maxHeight: "18vh", overflow: "auto", padding: "10px 12px", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, background: "rgba(16,18,20,.94)", color: "rgba(255,255,255,.82)", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{lightbox.prompt || "No prompt"}{isAdmin && lightbox.owner && <span style={{ display: "block", marginTop: 6, color: "rgba(45,212,191,.8)", fontSize: 10 }}>Owner · {lightbox.owner}</span>}</div></div></div>}
     <style>{`[data-prompt-input]::placeholder{color:rgba(255,255,255,.3)} @keyframes pendingGlow{0%,100%{opacity:.55}50%{opacity:1}} select option{background:#171a20;color:#fff}`}</style>
   </div>;
 }
