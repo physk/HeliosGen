@@ -1,6 +1,5 @@
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { basename, extname, join, normalize, relative } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { extname, join, normalize, relative } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { IMAGE_DIR, REFERENCE_DIR } from "./localDb";
 
@@ -48,14 +47,6 @@ export async function readMediaUrl(url: string): Promise<{ buffer: Buffer; exten
   if (!response.ok) throw new Error(`Unable to fetch reference image (${response.status})`);
   const contentType = response.headers.get("content-type") || "image/png";
   return { buffer: Buffer.from(await response.arrayBuffer()), extension: extension(contentType) };
-}
-
-export async function removeMedia(url: string): Promise<void> {
-  if (!url.startsWith("/api/media/")) return;
-  const parts = url.split("/").filter(Boolean);
-  if (parts.length !== 4 || !(parts[2] in MEDIA_ROOTS)) return;
-  const safePath = mediaPath(parts[2] as MediaFolder, basename(parts[3]));
-  if (safePath && existsSync(safePath)) await unlink(safePath).catch(() => undefined);
 }
 
 export function hashBuffer(buffer: Buffer): string {

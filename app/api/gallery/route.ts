@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteGeneration, deleteUpload, getGenerationById, getGenerations, getUploadById, getUploads } from "@/lib/localDb";
-import { removeMedia } from "@/lib/localMedia";
+import { getGenerationById, getGenerations, getUploadById, getUploads, hideGeneration, hideUpload } from "@/lib/localDb";
 import { canAccessOwnedRecord } from "@/lib/galleryAccess";
 import { getNetBirdIdentity, hasNetBirdIdentity } from "@/lib/netbird";
 
@@ -27,12 +26,11 @@ export async function GET(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   const identity = getNetBirdIdentity(request.headers);
   if (!hasNetBirdIdentity(identity)) return NextResponse.json({ error: "NetBird identity is required" }, { status: 403 });
-  const body = await request.json() as { id?: string; source?: "generation" | "upload"; url?: string };
+  const body = await request.json() as { id?: string; source?: "generation" | "upload" };
   if (!body.id || !body.source) return NextResponse.json({ error: "id and source are required" }, { status: 400 });
   const record = body.source === "generation" ? getGenerationById(body.id) : getUploadById(body.id);
   if (!record) return NextResponse.json({ error: "Image not found" }, { status: 404 });
   if (!canAccessOwnedRecord(record, identity)) return NextResponse.json({ error: "You do not have access to this image" }, { status: 403 });
-  if (body.source === "generation") deleteGeneration(body.id); else deleteUpload(body.id);
-  if (body.url) await removeMedia(body.url);
+  if (body.source === "generation") hideGeneration(body.id); else hideUpload(body.id);
   return NextResponse.json({ ok: true });
 }
