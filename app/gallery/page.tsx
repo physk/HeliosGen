@@ -1,11 +1,11 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ImagePlus, Maximize2, Minimize2, Plus, X } from "lucide-react";
 import { useSidebar } from "@/components/ui/sidebar";
 import DotCanvasBackground from "@/components/ui/DotCanvasBackground";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
+import { MediaPickerModal } from "@/components/MediaPickerModal";
 
 type ImageItem = {
   id: string;
@@ -69,8 +69,7 @@ function GalleryCard({ item, onOpen }: { item: ImageItem; onOpen: () => void }) 
 
 function GalleryInner() {
   const { state } = useSidebar();
-  const searchParams = useSearchParams();
-  const source = searchParams.get("source") === "uploaded" ? "uploaded" : "generated";
+  const [source, setSource] = useState<"generated" | "uploaded">("generated");
   const [items, setItems] = useState<ImageItem[]>([]);
   const [pending, setPending] = useState<Pending[]>([]);
   const [prompt, setPrompt] = useState("");
@@ -82,7 +81,10 @@ function GalleryInner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lightbox, setLightbox] = useState<ImageItem | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pickerButtonRef = useRef<HTMLButtonElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const loadGallery = useCallback(async () => {
@@ -93,6 +95,9 @@ function GalleryInner() {
   }, [source]);
 
   useEffect(() => { void loadGallery(); }, [loadGallery]);
+  useEffect(() => {
+    setSource(new URLSearchParams(window.location.search).get("source") === "uploaded" ? "uploaded" : "generated");
+  }, []);
   useEffect(() => { localStorage.setItem("aiui-gallery-zoom", String(zoom)); }, [zoom]);
   useEffect(() => { const saved = localStorage.getItem("aiui-gallery-zoom"); if (saved) setZoom(Number(saved)); }, []);
 
@@ -151,6 +156,10 @@ function GalleryInner() {
   }
 
   const columns = Math.max(2, Math.min(8, zoom));
+  const addPickerReference = (url: string) => {
+    if (references.length >= 5 || references.some((reference) => reference.url === url)) return;
+    setReferences((current) => [...current, { id: `${url}-${Date.now()}`, url }]);
+  };
   return <div style={{ flex: 1, background: "#0B0E14", display: "flex", flexDirection: "column", overflow: "hidden", color: "#fff", position: "relative" }}>
     <DotCanvasBackground />
     <div style={{ position: "relative", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "space-between", height: 48, padding: "0 18px", borderBottom: "1px solid rgba(255,255,255,.06)", opacity: state === "collapsed" ? 1 : 0.95 }}>
@@ -162,11 +171,11 @@ function GalleryInner() {
     </div>
     <div style={{ position: "absolute", zIndex: 4, left: "50%", bottom: 24, transform: "translateX(-50%)", width: "min(760px, calc(100% - 32px))" }}>
       {error && <div role="alert" style={{ marginBottom: 8, padding: "10px 14px", borderRadius: 10, border: "1px solid rgba(248,113,113,.25)", background: "rgba(16,18,20,.97)", color: "#f87171", fontSize: 12 }}>{error}</div>}
-      <div style={{ overflow: "hidden", border: "1px solid rgba(255,255,255,.12)", borderRadius: 16, background: "rgba(16,18,20,.94)", boxShadow: "0 16px 60px rgba(0,0,0,.5)", backdropFilter: "blur(20px)" }}>
+      <div ref={composerRef} style={{ overflow: "hidden", border: "1px solid rgba(255,255,255,.12)", borderRadius: 16, background: "rgba(16,18,20,.94)", boxShadow: "0 16px 60px rgba(0,0,0,.5)", backdropFilter: "blur(20px)" }}>
         {references.length > 0 && <div style={{ display: "flex", gap: 8, padding: "12px 14px 0", overflowX: "auto" }}>{references.map((ref) => <div key={ref.id} style={{ position: "relative", width: 58, height: 58, flexShrink: 0, borderRadius: 8, overflow: "hidden", border: ref.error ? "1px solid #f87171" : "1px solid rgba(255,255,255,.15)" }}><img src={ref.url} alt="Reference" style={{ width: "100%", height: "100%", objectFit: "cover", opacity: ref.uploading ? .45 : 1 }} /><button type="button" onClick={() => setReferences((current) => current.filter((item) => item.id !== ref.id))} aria-label="Remove reference" style={{ position: "absolute", top: 3, right: 3, display: "grid", placeItems: "center", width: 18, height: 18, border: 0, borderRadius: "50%", color: "#fff", background: "rgba(0,0,0,.7)", cursor: "pointer" }}><X size={11} /></button></div>)}</div>}
         <textarea ref={inputRef} data-prompt-input value={prompt} onChange={(event) => { setPrompt(event.target.value); resizePrompt(); }} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); void generate(); } }} placeholder="Describe the scene you imagine…" rows={1} style={{ display: "block", width: "100%", minHeight: 54, maxHeight: 264, resize: "none", outline: 0, border: 0, padding: references.length ? "12px 16px 4px" : "16px", background: "transparent", color: "#e8e8e6", font: "14px/1.5 inherit" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 10px 10px" }}>
-          <button type="button" onClick={() => fileInputRef.current?.click()} title="Add reference image" style={{ display: "grid", placeItems: "center", width: 34, height: 34, border: "1px solid rgba(255,255,255,.1)", borderRadius: 9, color: "rgba(255,255,255,.58)", background: "rgba(255,255,255,.04)", cursor: "pointer" }}><ImagePlus size={16} /></button>
+          <button ref={pickerButtonRef} type="button" onClick={() => setPickerOpen(true)} title="Add reference image" style={{ display: "grid", placeItems: "center", width: 34, height: 34, border: "1px solid rgba(255,255,255,.1)", borderRadius: 9, color: "rgba(255,255,255,.58)", background: "rgba(255,255,255,.04)", cursor: "pointer" }}><ImagePlus size={16} /></button>
           <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(event) => { Array.from(event.target.files || []).slice(0, 5 - references.length).forEach((file) => void uploadReference(file)); event.target.value = ""; }} />
           <select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value)} aria-label="Aspect ratio" style={{ height: 34, padding: "0 9px", border: "1px solid rgba(255,255,255,.1)", borderRadius: 9, color: "rgba(255,255,255,.62)", background: "#171a20", fontSize: 11, outline: 0 }}>{RATIOS.map((ratio) => <option key={ratio}>{ratio}</option>)}</select>
           <select value={quality} onChange={(event) => setQuality(event.target.value)} aria-label="Quality" style={{ height: 34, padding: "0 9px", border: "1px solid rgba(255,255,255,.1)", borderRadius: 9, color: "rgba(255,255,255,.62)", background: "#171a20", fontSize: 11, outline: 0 }}>{QUALITIES.map((value) => <option key={value}>{value}</option>)}</select>
@@ -176,11 +185,12 @@ function GalleryInner() {
       </div>
       <div style={{ display: "flex", justifyContent: "center", marginTop: 7, color: "rgba(255,255,255,.25)", fontSize: 10 }}><KbdGroup><Kbd>⌘</Kbd><Kbd>↵</Kbd></KbdGroup><span style={{ marginLeft: 6 }}>to generate</span></div>
     </div>
+    <MediaPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} anchorRef={composerRef} selectedUrls={references.map((reference) => reference.url)} maxCount={5} onPickUrl={addPickerReference} onDeselect={(url) => setReferences((current) => current.filter((reference) => reference.url !== url))} onUpload={() => { setPickerOpen(false); fileInputRef.current?.click(); }} />
     {lightbox && <div role="dialog" aria-modal="true" onClick={() => setLightbox(null)} style={{ position: "fixed", zIndex: 20, inset: 0, display: "grid", placeItems: "center", padding: 24, background: "rgba(0,0,0,.82)" }}><button type="button" aria-label="Close preview" onClick={() => setLightbox(null)} style={{ position: "fixed", top: 18, right: 18, display: "grid", placeItems: "center", width: 34, height: 34, border: "1px solid rgba(255,255,255,.12)", borderRadius: "50%", color: "#fff", background: "rgba(0,0,0,.5)" }}><X size={15} /></button><img src={lightbox.url} alt={lightbox.prompt || "Generated image"} onClick={(event) => event.stopPropagation()} style={{ maxWidth: "min(92vw, 1200px)", maxHeight: "86vh", objectFit: "contain", borderRadius: 12 }} /></div>}
     <style>{`[data-prompt-input]::placeholder{color:rgba(255,255,255,.3)} @keyframes pendingGlow{0%,100%{opacity:.55}50%{opacity:1}} select option{background:#171a20;color:#fff}`}</style>
   </div>;
 }
 
 export default function GalleryPage() {
-  return <Suspense fallback={<div style={{ flex: 1, background: "#0B0E14" }} />}><GalleryInner /></Suspense>;
+  return <GalleryInner />;
 }
