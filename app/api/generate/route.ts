@@ -7,6 +7,8 @@ import { createGeneration, updateGeneration } from "@/lib/localDb";
 import { readMediaUrl, saveMedia } from "@/lib/localMedia";
 import { jobStore } from "@/lib/jobStore";
 import { jobEvents } from "@/lib/jobEvents";
+import { normalizeGenerateRequest } from "@/lib/generationRequest";
+import { getNetBirdIdentity, hasNetBirdIdentity } from "@/lib/netbird";
 
 const CODEX_SIZE_MAP: Record<string, string> = {
   auto: "auto", "1:1": "1024x1024", "16:9": "1536x1024", "9:16": "1024x1536", "4:3": "1536x1024", "3:4": "1024x1536",
@@ -56,16 +58,16 @@ async function runCodexImagegen(options: { prompt: string; images: Array<{ buffe
 export const maxDuration = 1000;
 
 export async function POST(request: NextRequest) {
-  let body: { prompt?: string; imageUrls?: string[]; aspectRatio?: string; quality?: string };
+  const identity = getNetBirdIdentity(request.headers);
+  if (!hasNetBirdIdentity(identity)) return NextResponse.json({ error: "NetBird identity is required" }, { status: 403 });
+  let body: unknown;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "Invalid request body" }, { status: 400 }); }
-  const prompt = body.prompt?.trim();
+  const input = normalizeGenerateRequest(body, identity);
+  const { prompt, aspectRatio, quality, imageUrls } = input;
   if (!prompt) return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
-  const aspectRatio = body.aspectRatio || "1:1";
-  const quality = body.quality || "auto";
-  const imageUrls = Array.isArray(body.imageUrls) ? body.imageUrls.filter((url): url is string => typeof url === "string").slice(0, 5) : [];
   const taskId = `codex-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  createGeneration({ task_id: taskId, status: "pending", prompt, model: "codex-imagegen", aspect_ratio: aspectRatio, quality, reference_image_urls: imageUrls });
+  createGeneration({ task_id: taskId, status: "pending", prompt, model: "codex-imagegen", owner: input.owner, aspect_ratio: aspectRatio, quality, reference_image_urls: imageUrls });
   jobStore.set(taskId, { status: "pending", type: "image" });
   void (async () => {
     try {

@@ -23,6 +23,12 @@ docker compose up -d --build
 
 The Compose file mounts the persistent `helios-data` volume at `/data`. This is the only application state volume required. Put an external SSO/reverse proxy in front of `http://localhost:3000` before exposing the service.
 
+## NetBird gallery ownership
+
+When the service is reached through a NetBird reverse proxy, HeliosGen reads the trusted `X-NetBird-User` identity header and the deployment's `X-NetBird-Group` header. It also accepts NetBird's plural `X-NetBird-Groups` spelling. Group values may be comma-separated; semicolon-separated and JSON-array values are accepted defensively. Members of the exact `ImageGen-Admin` group can see all generations; other users can see only their own. Requests without a NetBird user identity are rejected by image, gallery, upload, and job APIs.
+
+New generated images and uploaded references are tagged with the server-derived user. Existing ownerless records are retained for admins only and are never assigned to the first user who views them.
+
 ## Connect Codex
 
 1. Open **Settings → Codex**.
