@@ -1,18 +1,23 @@
 import { NextResponse } from "next/server";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { codexLoginStore } from "@/lib/codexLoginStore";
 
 const lifetime = 16 * 60 * 1000;
 const env = () => ({ ...process.env, CODEX_HOME: process.env.CODEX_HOME || "/data/codex" });
 const stripAnsi = (value: string) => value.replace(/\x1b\[[0-9;]*m/g, "");
+const authFile = () => `${process.env.CODEX_HOME || "/data/codex"}/auth.json`;
 
 function isLoggedIn(): Promise<boolean> {
   return new Promise((resolve) => {
     const child = spawn("codex", ["login", "status"], { env: env() });
     let output = "";
     child.stdout.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    child.stderr.on("data", (chunk: Buffer) => { output += chunk.toString(); });
     child.on("error", () => resolve(false));
-    child.on("close", () => resolve(/logged in/im.test(output) && !/not logged in/im.test(output)));
+    child.on("close", (code) => resolve(
+      existsSync(authFile()) || (code === 0 && /logged in|authenticated|successfully/im.test(stripAnsi(output)) && !/not logged in/im.test(stripAnsi(output))),
+    ));
   });
 }
 

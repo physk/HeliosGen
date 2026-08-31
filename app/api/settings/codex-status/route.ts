@@ -19,5 +19,10 @@ export async function GET() {
   ]);
   const authFound = existsSync(`${home}/auth.json`);
   const stored = codexLoginStore.get();
-  return NextResponse.json({ status: stored.status === "pending" || stored.status === "error" ? stored : (codexInstalled && authFound ? { status: "success" } : { status: "idle" }), codexInstalled, imagegenInstalled, authFound });
+  const status = authFound
+    ? { status: "success" as const }
+    : stored.status === "pending" || stored.status === "error"
+      ? stored
+      : { status: "idle" as const };
+  return NextResponse.json({ status, codexInstalled, imagegenInstalled, authFound });
 }
