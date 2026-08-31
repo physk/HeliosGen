@@ -5,4 +5,13 @@ html, body { min-height: 100%; }
 body { margin: 0; background: #0b0d11; color: #fff; font-family: Arial, Helvetica, sans-serif; -webkit-font-smoothing: antialiased; }
 button, a, textarea, input { font: inherit; }
 button:focus-visible, a:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid #5eead4; outline-offset: 2px; }
+.composer-grid {
+  background-color: #0a0c12;
+  background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(to bottom, black, rgba(0,0,0,.75) 72%, transparent);
+}
+.composer-glow { pointer-events: none; background: radial-gradient(circle, rgba(45,212,191,.075), transparent 68%); filter: blur(12px); }
+.composer-connector { background: repeating-linear-gradient(90deg, rgba(255,255,255,.2) 0 5px, transparent 5px 10px); }
+@media (max-width: 639px) { .composer-connector { background: repeating-linear-gradient(180deg, rgba(255,255,255,.2) 0 5px, transparent 5px 10px); } }
 @media (max-width: 767px) { input, textarea, select { font-size: 16px; } }
