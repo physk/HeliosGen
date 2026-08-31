@@ -1,142 +1,186 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, ImagePlus, LoaderCircle, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { ImagePlus, Maximize2, Minimize2, Plus, X } from "lucide-react";
+import { useSidebar } from "@/components/ui/sidebar";
+import DotCanvasBackground from "@/components/ui/DotCanvasBackground";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 
-type GalleryItem = {
+type ImageItem = {
   id: string;
   url: string;
-  mediaType: "image";
   source: "generation" | "upload";
+  created_at: string;
   prompt?: string;
   aspect_ratio?: string;
   quality?: string;
-  created_at: string;
   referenceImageUrls?: string[];
 };
 
-const RATIOS = ["auto", "1:1", "16:9", "9:16", "4:3", "3:4"];
+type Reference = { id: string; url: string; uploading?: boolean; error?: string };
+type Pending = { id: string; prompt: string; refs: string[]; status: "pending" | "generating" | "error"; error?: string };
+
+const EMPTY_IMAGES = ["/1.webp", "/2.webp", "/3.webp", "/4.webp"];
+const RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4"];
 const QUALITIES = ["auto", "low", "medium", "high"];
 
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+function EmptyFan({ blur = false }: { blur?: boolean }) {
+  const cards = [
+    { rotate: "-10deg", rounded: false, margin: "clamp(-36px,-1.5vw,-16px)", z: 4 },
+    { rotate: "4deg", rounded: false, margin: "clamp(-36px,-1.5vw,-16px)", z: 3 },
+    { rotate: "180deg", rounded: true, margin: "clamp(-36px,-1.5vw,-16px)", z: 2 },
+    { rotate: "-4deg", rounded: false, margin: "0", z: 1 },
+  ];
+  return <div style={{ display: "flex", alignItems: "center", position: blur ? "absolute" : undefined, left: blur ? "50%" : undefined, top: blur ? 0 : undefined, transform: blur ? "translateX(-50%)" : undefined, filter: blur ? "blur(32px)" : undefined, opacity: blur ? 0.4 : 1 }}>
+    {cards.map((card, index) => <div key={index} style={{ display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginRight: card.margin, zIndex: card.z }}>
+      <div style={{ transform: `rotate(${card.rotate})${card.rounded ? " scaleY(-1)" : ""}` }}>
+        <div style={{ position: "relative", overflow: "hidden", width: "clamp(64px,min(12vw,16vh),172px)", height: "clamp(64px,min(12vw,16vh),172px)", borderRadius: card.rounded ? "50%" : "12px", border: "3px solid rgba(45,212,191,0.75)", boxShadow: "0 0 14px rgba(45,212,191,0.35), 0 0 4px rgba(45,212,191,0.2)" }}>
+          <img src={EMPTY_IMAGES[index]} alt="" style={{ objectFit: "cover", width: "100%", height: "100%", display: "block" }} />
+        </div>
+      </div>
+    </div>)}
+  </div>;
 }
 
-export default function GalleryPage() {
+function EmptyState() {
+  return <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", minHeight: "320px" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "clamp(12px,2.5vh,32px)", alignItems: "center", width: "100%", position: "relative" }}>
+      <EmptyFan blur /><EmptyFan />
+    </div>
+  </div>;
+}
+
+function PendingTile({ item }: { item: Pending }) {
+  return <div style={{ position: "relative", overflow: "hidden", aspectRatio: "1 / 1", borderRadius: 12, background: "#11151b", border: "1px solid rgba(255,255,255,0.08)" }}>
+    <div style={{ position: "absolute", top: "-40%", left: "50%", transform: "translateX(-50%)", width: "180%", height: "80%", background: "radial-gradient(ellipse at 50% 20%, rgba(20,160,140,0.45), rgba(30,100,200,0.2) 40%, transparent 70%)", animation: "pendingGlow 3s ease-in-out infinite" }} />
+    <div style={{ position: "absolute", inset: 8, display: "flex", justifyContent: "space-between", alignItems: "flex-start", zIndex: 1 }}>
+      <span style={{ borderRadius: 999, padding: "6px 10px", background: "rgba(0,0,0,.58)", color: item.status === "error" ? "#f87171" : "#2DD4BF", fontSize: 11 }}>{item.status === "pending" ? "Pending" : item.status === "error" ? "Failed" : "Generating…"}</span>
+    </div>
+    <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "24px 10px 10px", background: "linear-gradient(to top, rgba(0,0,0,.65), transparent)" }}><p style={{ margin: 0, color: "rgba(255,255,255,.4)", fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.error || item.prompt}</p></div>
+  </div>;
+}
+
+function GalleryCard({ item, onOpen }: { item: ImageItem; onOpen: () => void }) {
+  return <button type="button" onClick={onOpen} style={{ position: "relative", display: "block", overflow: "hidden", width: "100%", aspectRatio: item.aspect_ratio?.replace(":", " /") || "4 / 3", border: 0, borderRadius: 12, padding: 0, background: "#14171c", cursor: "pointer" }}>
+    <img src={item.url} alt={item.prompt || "Generated image"} loading="lazy" style={{ display: "block", width: "100%", height: "100%", objectFit: "cover" }} />
+  </button>;
+}
+
+function GalleryInner() {
+  const { state } = useSidebar();
+  const searchParams = useSearchParams();
+  const source = searchParams.get("source") === "uploaded" ? "uploaded" : "generated";
+  const [items, setItems] = useState<ImageItem[]>([]);
+  const [pending, setPending] = useState<Pending[]>([]);
   const [prompt, setPrompt] = useState("");
-  const [ratio, setRatio] = useState("1:1");
+  const [references, setReferences] = useState<Reference[]>([]);
+  const [aspectRatio, setAspectRatio] = useState("1:1");
   const [quality, setQuality] = useState("auto");
-  const [references, setReferences] = useState<string[]>([]);
-  const [items, setItems] = useState<GalleryItem[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<GalleryItem | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [count, setCount] = useState(1);
+  const [zoom, setZoom] = useState(6);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [lightbox, setLightbox] = useState<ImageItem | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const loadGallery = useCallback(async () => {
-    const response = await fetch("/api/gallery");
-    if (!response.ok) throw new Error("Unable to load gallery");
-    const data = await response.json() as { items: GalleryItem[] };
-    setItems(data.items);
-  }, []);
+    const response = await fetch(`/api/gallery?page=0&source=${source === "uploaded" ? "uploaded" : "generated"}`);
+    if (!response.ok) return;
+    const data = await response.json() as { items?: ImageItem[] };
+    setItems(data.items || []);
+  }, [source]);
 
-  useEffect(() => { const timer = window.setTimeout(() => { loadGallery().catch((e) => setError(e.message)); }, 0); return () => window.clearTimeout(timer); }, [loadGallery]);
+  useEffect(() => { void loadGallery(); }, [loadGallery]);
+  useEffect(() => { localStorage.setItem("aiui-gallery-zoom", String(zoom)); }, [zoom]);
+  useEffect(() => { const saved = localStorage.getItem("aiui-gallery-zoom"); if (saved) setZoom(Number(saved)); }, []);
 
-  async function upload(files: FileList | null) {
-    if (!files?.length) return;
-    setError(null);
+  function resizePrompt() {
+    if (!inputRef.current) return;
+    inputRef.current.style.height = "auto";
+    inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 264)}px`;
+  }
+
+  async function uploadReference(file: File) {
+    const id = `${file.name}-${file.lastModified}`;
+    setReferences((current) => [...current, { id, url: URL.createObjectURL(file), uploading: true }]);
     try {
-      const uploaded: string[] = [];
-      for (const file of Array.from(files).slice(0, 5 - references.length)) {
-        if (!file.type.startsWith("image/")) continue;
-        const response = await fetch("/api/upload-asset", { method: "POST", headers: { "Content-Type": file.type }, body: file });
-        const data = await response.json() as { url?: string; error?: string };
-        if (!response.ok || !data.url) throw new Error(data.error || "Upload failed");
-        uploaded.push(data.url);
-      }
-      setReferences((current) => [...current, ...uploaded].slice(0, 5));
-    } catch (e) { setError(e instanceof Error ? e.message : "Upload failed"); }
+      const response = await fetch("/api/upload-asset", { method: "POST", headers: { "Content-Type": file.type }, body: file });
+      const data = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !data.url) throw new Error(data.error || "Upload failed");
+      setReferences((current) => current.map((ref) => ref.id === id ? { ...ref, url: data.url!, uploading: false } : ref));
+    } catch (uploadError) {
+      setReferences((current) => current.map((ref) => ref.id === id ? { ...ref, uploading: false, error: uploadError instanceof Error ? uploadError.message : "Upload failed" } : ref));
+    }
   }
 
   async function generate() {
-    if (!prompt.trim() || busy) return;
-    setBusy(true); setError(null);
+    const text = prompt.trim();
+    if (!text || loading) return;
+    const readyRefs = references.filter((ref) => !ref.uploading && !ref.error).map((ref) => ref.url);
+    if (readyRefs.length !== references.length) { setError("Images are still uploading…"); return; }
+    setError("");
+    const batch = Array.from({ length: count }, (_, index) => ({ id: `${Date.now()}-${index}`, prompt: text, refs: readyRefs, status: "pending" as const }));
+    setPending((current) => [...batch, ...current]);
+    setLoading(true);
     try {
-      const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, aspectRatio: ratio, quality, imageUrls: references }) });
-      const data = await response.json() as { taskId?: string; error?: string };
-      if (!response.ok || !data.taskId) throw new Error(data.error || "Generation could not be started");
-      await new Promise<void>((resolve, reject) => {
-        const stream = new EventSource(`/api/job-stream?taskId=${encodeURIComponent(data.taskId!)}`);
-        stream.onmessage = (event) => {
-          const result = JSON.parse(event.data) as { status: string; error?: string };
-          stream.close();
-          if (result.status === "error") reject(new Error(result.error || "Generation failed")); else resolve();
-        };
-        stream.onerror = () => { stream.close(); reject(new Error("Lost connection while waiting for the image")); };
-      });
-      setPrompt(""); setReferences([]); await loadGallery();
-    } catch (e) { setError(e instanceof Error ? e.message : "Generation failed"); }
-    finally { setBusy(false); }
+      for (const job of batch) {
+        setPending((current) => current.map((item) => item.id === job.id ? { ...item, status: "generating" } : item));
+        const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: text, imageUrls: readyRefs, aspectRatio, quality }) });
+        const data = await response.json() as { taskId?: string; error?: string };
+        if (!response.ok || !data.taskId) throw new Error(data.error || "Generation failed");
+        let done = false;
+        for (let attempt = 0; attempt < 200 && !done; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          const status = await fetch(`/api/job-status?taskId=${encodeURIComponent(data.taskId!)}`).then((result) => result.json()) as { status: string; error?: string };
+          if (status.status === "error") throw new Error(status.error || "Generation failed");
+          done = status.status === "done";
+        }
+        if (!done) throw new Error("Generation timed out");
+        setPending((current) => current.filter((item) => item.id !== job.id));
+        await loadGallery();
+      }
+      setPrompt("");
+      setReferences([]);
+    } catch (generationError) {
+      const message = generationError instanceof Error ? generationError.message : "Generation failed";
+      setError(message);
+      setPending((current) => current.map((item) => item.status === "generating" ? { ...item, status: "error", error: message } : item));
+    } finally { setLoading(false); }
   }
 
-  async function remove(item: GalleryItem) {
-    setItems((current) => current.filter((entry) => entry.id !== item.id));
-    await fetch("/api/gallery", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: item.id, source: item.source, url: item.url }) }).catch(() => loadGallery());
-    if (selected?.id === item.id) setSelected(null);
-  }
-
-  return (
-    <main className="flex min-h-0 flex-1 flex-col overflow-auto bg-[#0b0d11]">
-      <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-8 px-5 py-8 sm:px-8 lg:px-12">
-        <header className="flex flex-wrap items-end justify-between gap-5">
-          <div>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-teal-300/70">Codex image studio</p>
-            <h1 className="text-3xl font-semibold tracking-[-0.04em] text-white sm:text-4xl">Make an image.</h1>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-white/45">Describe a scene, add references when you need to edit or preserve details, and let Codex handle the rest.</p>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-white/35"><span className="size-2 rounded-full bg-teal-300 shadow-[0_0_14px_rgba(94,234,212,0.8)]" /> Shared Codex workspace</div>
-        </header>
-
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
-          <div className="rounded-2xl border border-white/10 bg-[#11151c] p-4 shadow-2xl shadow-black/20 sm:p-5">
-            <label htmlFor="prompt" className="mb-3 block text-xs font-medium text-white/55">Prompt</label>
-            <textarea id="prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void generate(); }} placeholder="A quiet alpine observatory at blue hour, warm light in the windows…" className="min-h-36 w-full resize-y rounded-xl border border-white/10 bg-[#0b0e13] p-4 text-[15px] leading-7 text-white outline-none transition placeholder:text-white/25 focus:border-teal-300/50 focus:ring-2 focus:ring-teal-300/10" />
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => inputRef.current?.click()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-dashed border-white/20 px-3 text-xs font-medium text-white/65 transition hover:border-teal-300/50 hover:text-white"><ImagePlus className="size-4" /> Add references <span className="text-white/30">{references.length}/5</span></button>
-              <input ref={inputRef} type="file" accept="image/*" multiple hidden onChange={(e) => { void upload(e.target.files); e.target.value = ""; }} />
-              <span className="ml-auto hidden text-[11px] text-white/25 sm:block">⌘↵ to generate</span>
-            </div>
-            {references.length > 0 && <div className="mt-4 flex flex-wrap gap-2">{references.map((url) => <div key={url} className="group relative size-16 overflow-hidden rounded-lg border border-white/15 bg-black"><img src={url} alt="Reference" className="size-full object-cover" /><button type="button" onClick={() => setReferences((current) => current.filter((item) => item !== url))} className="absolute right-1 top-1 hidden size-5 place-items-center rounded-full bg-black/75 text-white group-hover:grid" aria-label="Remove reference"><X className="size-3" /></button></div>)}</div>}
-            {error && <p role="alert" className="mt-4 rounded-lg border border-red-300/20 bg-red-300/5 px-3 py-2 text-xs leading-5 text-red-200">{error}</p>}
-            <div className="mt-5 flex justify-end"><button type="button" disabled={!prompt.trim() || busy} onClick={() => void generate()} className="inline-flex h-11 min-w-36 items-center justify-center gap-2 rounded-lg bg-teal-300 px-5 text-sm font-semibold text-[#062522] transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:opacity-40">{busy ? <><LoaderCircle className="size-4 animate-spin" /> Generating…</> : <><Plus className="size-4" /> Generate</>}</button></div>
-          </div>
-
-          <aside className="rounded-2xl border border-white/10 bg-[#11151c] p-4 sm:p-5">
-            <h2 className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">Output</h2>
-            <div className="mt-5 flex flex-col gap-5">
-              <Control label="Aspect ratio"><div className="grid grid-cols-3 gap-1.5">{RATIOS.map((value) => <button type="button" key={value} onClick={() => setRatio(value)} className={`h-9 rounded-md border text-xs transition ${ratio === value ? "border-teal-300/70 bg-teal-300/10 text-teal-100" : "border-white/10 text-white/45 hover:border-white/25 hover:text-white"}`}>{value}</button>)}</div></Control>
-              <Control label="Quality"><div className="grid grid-cols-4 gap-1.5">{QUALITIES.map((value) => <button type="button" key={value} onClick={() => setQuality(value)} className={`h-9 rounded-md border text-xs capitalize transition ${quality === value ? "border-teal-300/70 bg-teal-300/10 text-teal-100" : "border-white/10 text-white/45 hover:border-white/25 hover:text-white"}`}>{value}</button>)}</div></Control>
-              <div className="border-t border-white/8 pt-4 text-xs leading-5 text-white/35">Codex supports up to five reference images. Images are kept in the local application volume.</div>
-            </div>
-          </aside>
-        </section>
-
-        <section>
-          <div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-medium tracking-[-0.02em] text-white">Gallery</h2><p className="mt-1 text-xs text-white/35">Your local generation history and uploaded references.</p></div><button type="button" onClick={() => void loadGallery()} className="inline-flex size-9 items-center justify-center rounded-lg border border-white/10 text-white/45 transition hover:border-white/25 hover:text-white" aria-label="Refresh gallery"><RefreshCw className="size-4" /></button></div>
-          {items.length === 0 ? <div className="flex min-h-52 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-white/[0.015] text-center"><div className="mb-3 grid size-11 place-items-center rounded-xl border border-white/10 bg-white/[0.03] text-teal-200/70"><ImagePlus className="size-5" /></div><p className="text-sm text-white/60">Nothing here yet</p><p className="mt-1 text-xs text-white/30">Your first image will appear in this gallery.</p></div> : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">{items.map((item) => <GalleryCard key={item.id} item={item} onOpen={() => setSelected(item)} onDelete={() => void remove(item)} />)}</div>}
-        </section>
+  const columns = Math.max(2, Math.min(8, zoom));
+  return <div style={{ flex: 1, background: "#0B0E14", display: "flex", flexDirection: "column", overflow: "hidden", color: "#fff", position: "relative" }}>
+    <DotCanvasBackground />
+    <div style={{ position: "relative", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "space-between", height: 48, padding: "0 18px", borderBottom: "1px solid rgba(255,255,255,.06)", opacity: state === "collapsed" ? 1 : 0.95 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 18, fontSize: 12 }}><a href="/gallery?tab=images&source=generated" style={{ color: source === "generated" ? "#fff" : "rgba(255,255,255,.35)", textDecoration: "none" }}>Generated</a><a href="/gallery?tab=images&source=uploaded" style={{ color: source === "uploaded" ? "#fff" : "rgba(255,255,255,.35)", textDecoration: "none" }}>Uploaded</a></div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, color: "rgba(255,255,255,.4)", fontSize: 11 }}><Minimize2 size={13} /><input aria-label="Gallery zoom" type="range" min="2" max="8" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} style={{ width: 74, accentColor: "#2DD4BF" }} /><Maximize2 size={13} /></div>
+    </div>
+    <div style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, overflowY: "auto", padding: "18px 18px 270px" }}>
+      {pending.length + items.length === 0 ? <EmptyState /> : <div style={{ display: "grid", gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: 12 }}>{pending.map((item) => <PendingTile key={item.id} item={item} />)}{items.map((item) => <GalleryCard key={`${item.source}-${item.id}`} item={item} onOpen={() => setLightbox(item)} />)}</div>}
+    </div>
+    <div style={{ position: "absolute", zIndex: 4, left: "50%", bottom: 24, transform: "translateX(-50%)", width: "min(760px, calc(100% - 32px))" }}>
+      {error && <div role="alert" style={{ marginBottom: 8, padding: "10px 14px", borderRadius: 10, border: "1px solid rgba(248,113,113,.25)", background: "rgba(16,18,20,.97)", color: "#f87171", fontSize: 12 }}>{error}</div>}
+      <div style={{ overflow: "hidden", border: "1px solid rgba(255,255,255,.12)", borderRadius: 16, background: "rgba(16,18,20,.94)", boxShadow: "0 16px 60px rgba(0,0,0,.5)", backdropFilter: "blur(20px)" }}>
+        {references.length > 0 && <div style={{ display: "flex", gap: 8, padding: "12px 14px 0", overflowX: "auto" }}>{references.map((ref) => <div key={ref.id} style={{ position: "relative", width: 58, height: 58, flexShrink: 0, borderRadius: 8, overflow: "hidden", border: ref.error ? "1px solid #f87171" : "1px solid rgba(255,255,255,.15)" }}><img src={ref.url} alt="Reference" style={{ width: "100%", height: "100%", objectFit: "cover", opacity: ref.uploading ? .45 : 1 }} /><button type="button" onClick={() => setReferences((current) => current.filter((item) => item.id !== ref.id))} aria-label="Remove reference" style={{ position: "absolute", top: 3, right: 3, display: "grid", placeItems: "center", width: 18, height: 18, border: 0, borderRadius: "50%", color: "#fff", background: "rgba(0,0,0,.7)", cursor: "pointer" }}><X size={11} /></button></div>)}</div>}
+        <textarea ref={inputRef} data-prompt-input value={prompt} onChange={(event) => { setPrompt(event.target.value); resizePrompt(); }} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); void generate(); } }} placeholder="Describe the scene you imagine…" rows={1} style={{ display: "block", width: "100%", minHeight: 54, maxHeight: 264, resize: "none", outline: 0, border: 0, padding: references.length ? "12px 16px 4px" : "16px", background: "transparent", color: "#e8e8e6", font: "14px/1.5 inherit" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 10px 10px" }}>
+          <button type="button" onClick={() => fileInputRef.current?.click()} title="Add reference image" style={{ display: "grid", placeItems: "center", width: 34, height: 34, border: "1px solid rgba(255,255,255,.1)", borderRadius: 9, color: "rgba(255,255,255,.58)", background: "rgba(255,255,255,.04)", cursor: "pointer" }}><ImagePlus size={16} /></button>
+          <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(event) => { Array.from(event.target.files || []).slice(0, 5 - references.length).forEach((file) => void uploadReference(file)); event.target.value = ""; }} />
+          <select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value)} aria-label="Aspect ratio" style={{ height: 34, padding: "0 9px", border: "1px solid rgba(255,255,255,.1)", borderRadius: 9, color: "rgba(255,255,255,.62)", background: "#171a20", fontSize: 11, outline: 0 }}>{RATIOS.map((ratio) => <option key={ratio}>{ratio}</option>)}</select>
+          <select value={quality} onChange={(event) => setQuality(event.target.value)} aria-label="Quality" style={{ height: 34, padding: "0 9px", border: "1px solid rgba(255,255,255,.1)", borderRadius: 9, color: "rgba(255,255,255,.62)", background: "#171a20", fontSize: 11, outline: 0 }}>{QUALITIES.map((value) => <option key={value}>{value}</option>)}</select>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: "auto", color: "rgba(255,255,255,.5)", fontSize: 11 }}><button type="button" onClick={() => setCount((value) => Math.max(1, value - 1))} style={{ border: 0, background: "none", color: "inherit", cursor: "pointer" }}>−</button><span style={{ minWidth: 14, textAlign: "center" }}>{count}</span><button type="button" onClick={() => setCount((value) => Math.min(4, value + 1))} style={{ border: 0, background: "none", color: "inherit", cursor: "pointer" }}>+</button></div>
+          <button type="button" onClick={() => void generate()} disabled={loading || !prompt.trim()} style={{ display: "flex", alignItems: "center", gap: 7, height: 34, padding: "0 13px", border: 0, borderRadius: 9, color: "#062522", background: loading || !prompt.trim() ? "rgba(45,212,191,.35)" : "#2DD4BF", fontSize: 12, fontWeight: 600, cursor: loading || !prompt.trim() ? "default" : "pointer" }}>{loading ? "Generating…" : "Generate"}<Plus size={14} /></button>
+        </div>
       </div>
-      {selected && <Lightbox item={selected} onClose={() => setSelected(null)} onDelete={() => void remove(selected)} />}
-    </main>
-  );
+      <div style={{ display: "flex", justifyContent: "center", marginTop: 7, color: "rgba(255,255,255,.25)", fontSize: 10 }}><KbdGroup><Kbd>⌘</Kbd><Kbd>↵</Kbd></KbdGroup><span style={{ marginLeft: 6 }}>to generate</span></div>
+    </div>
+    {lightbox && <div role="dialog" aria-modal="true" onClick={() => setLightbox(null)} style={{ position: "fixed", zIndex: 20, inset: 0, display: "grid", placeItems: "center", padding: 24, background: "rgba(0,0,0,.82)" }}><button type="button" aria-label="Close preview" onClick={() => setLightbox(null)} style={{ position: "fixed", top: 18, right: 18, display: "grid", placeItems: "center", width: 34, height: 34, border: "1px solid rgba(255,255,255,.12)", borderRadius: "50%", color: "#fff", background: "rgba(0,0,0,.5)" }}><X size={15} /></button><img src={lightbox.url} alt={lightbox.prompt || "Generated image"} onClick={(event) => event.stopPropagation()} style={{ maxWidth: "min(92vw, 1200px)", maxHeight: "86vh", objectFit: "contain", borderRadius: 12 }} /></div>}
+    <style>{`[data-prompt-input]::placeholder{color:rgba(255,255,255,.3)} @keyframes pendingGlow{0%,100%{opacity:.55}50%{opacity:1}} select option{background:#171a20;color:#fff}`}</style>
+  </div>;
 }
 
-function Control({ label, children }: { label: string; children: React.ReactNode }) { return <div><p className="mb-2 text-xs text-white/45">{label}</p>{children}</div>; }
-
-function GalleryCard({ item, onOpen, onDelete }: { item: GalleryItem; onOpen: () => void; onDelete: () => void }) {
-  return <article className="group relative overflow-hidden rounded-xl border border-white/10 bg-[#11151c] transition hover:border-teal-200/35"><button type="button" onClick={onOpen} className="block aspect-square w-full cursor-zoom-in bg-black"><img src={item.url} alt={item.prompt || "Generated image"} loading="lazy" className="size-full object-cover transition duration-300 group-hover:scale-[1.025]" /></button><div className="absolute inset-x-0 bottom-0 flex translate-y-1 items-end justify-between bg-gradient-to-t from-black/80 via-black/30 to-transparent px-3 pb-2 pt-8 opacity-0 transition group-hover:translate-y-0 group-hover:opacity-100"><span className="truncate pr-2 text-[10px] text-white/60">{item.source === "generation" ? formatDate(item.created_at) : "Reference image"}</span><div className="flex gap-1"><a href={`/api/download?url=${encodeURIComponent(item.url)}&filename=heliosgen-${item.id}.png`} className="grid size-7 place-items-center rounded-md bg-black/50 text-white/75 hover:text-white" aria-label="Download image"><Download className="size-3.5" /></a><button type="button" onClick={(e) => { e.stopPropagation(); onDelete(); }} className="grid size-7 place-items-center rounded-md bg-black/50 text-red-200/75 hover:text-red-100" aria-label="Delete image"><Trash2 className="size-3.5" /></button></div></div></article>;
-}
-
-function Lightbox({ item, onClose, onDelete }: { item: GalleryItem; onClose: () => void; onDelete: () => void }) {
-  return <div role="dialog" aria-modal="true" aria-label="Image preview" className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm" onClick={onClose}><div className="flex max-h-full w-full max-w-5xl flex-col gap-4" onClick={(e) => e.stopPropagation()}><div className="flex items-center justify-between text-white"><div><p className="text-sm font-medium">{item.source === "generation" ? "Codex generation" : "Reference image"}</p><p className="mt-1 text-xs text-white/40">{formatDate(item.created_at)}{item.aspect_ratio ? ` · ${item.aspect_ratio}` : ""}</p></div><div className="flex gap-2"><a href={`/api/download?url=${encodeURIComponent(item.url)}&filename=heliosgen-${item.id}.png`} className="grid size-9 place-items-center rounded-lg border border-white/15 text-white/70 hover:text-white" aria-label="Download image"><Download className="size-4" /></a><button type="button" onClick={onDelete} className="grid size-9 place-items-center rounded-lg border border-red-200/20 text-red-100/70 hover:text-red-100" aria-label="Delete image"><Trash2 className="size-4" /></button><button type="button" onClick={onClose} className="grid size-9 place-items-center rounded-lg border border-white/15 text-white/70 hover:text-white" aria-label="Close preview"><X className="size-4" /></button></div></div><div className="flex min-h-0 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-[#090b0f] p-2"><img src={item.url} alt={item.prompt || "Image preview"} className="max-h-[72vh] max-w-full object-contain" /></div>{item.prompt && <p className="max-h-24 overflow-auto rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm leading-6 text-white/60">{item.prompt}</p>}</div></div>;
+export default function GalleryPage() {
+  return <Suspense fallback={<div style={{ flex: 1, background: "#0B0E14" }} />}><GalleryInner /></Suspense>;
 }
