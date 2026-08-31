@@ -41,10 +41,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-.job-store.json
-.codex-login-store.json
-
-# Guest mode — local DB and generated media
-/data/*.json
-/public/generated/**
-!/public/generated/.gitkeep
+# Local application state
+/data/*
+!/data/.gitkeep

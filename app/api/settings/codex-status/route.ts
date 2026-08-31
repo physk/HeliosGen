@@ -1,27 +1,23 @@
 import { NextResponse } from "next/server";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { codexLoginStore } from "@/lib/codexLoginStore";
 
-/**
- * codex-imagegen has no per-user credentials to save from the browser — it's a
- * single shared `codex login` session on this host. This just reports whether
- * that host-level setup is in place, for the "READY / NOT CONFIGURED" badge.
- */
-function binaryOnPath(): Promise<boolean> {
+function commandAvailable(command: string, args: string[]): Promise<boolean> {
   return new Promise((resolve) => {
-    const proc = spawn("codex-imagegen", ["--help"]);
-    proc.on("error", () => resolve(false));
-    proc.on("close", (code) => resolve(code === 0));
+    const child = spawn(command, args, { env: { ...process.env, CODEX_HOME: process.env.CODEX_HOME || "/data/codex" } });
+    child.on("error", () => resolve(false));
+    child.on("close", (code) => resolve(code === 0));
   });
 }
 
 export async function GET() {
-  const authPath = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json");
-  const [installed, authFound] = await Promise.all([
-    binaryOnPath(),
-    Promise.resolve(existsSync(authPath)),
+  const home = process.env.CODEX_HOME || "/data/codex";
+  const [codexInstalled, imagegenInstalled] = await Promise.all([
+    commandAvailable("codex", ["--version"]),
+    commandAvailable("codex-imagegen", ["--version"]),
   ]);
-  return NextResponse.json({ installed, authFound, ready: installed && authFound });
+  const authFound = existsSync(`${home}/auth.json`);
+  const stored = codexLoginStore.get();
+  return NextResponse.json({ status: stored.status === "pending" || stored.status === "error" ? stored : (codexInstalled && authFound ? { status: "success" } : { status: "idle" }), codexInstalled, imagegenInstalled, authFound });
 }

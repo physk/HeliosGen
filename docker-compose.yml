@@ -1,0 +1,11 @@
+services:
+  heliosgen:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - helios-data:/data
+
+volumes:
+  helios-data:
